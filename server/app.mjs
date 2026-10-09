@@ -90,6 +90,29 @@ function summary(rows) {
   };
 }
 
+function overview(rows) {
+  const services = new Map();
+  for (const row of rows) {
+    let measure = services.get(row.service);
+    if (!measure) {
+      measure = { service: row.service, incidentCount: 0, unresolvedCount: 0, highSeverityCount: 0, resolutionHours: [] };
+      services.set(row.service, measure);
+    }
+    measure.incidentCount++;
+    if (row.status !== 'resolved') measure.unresolvedCount++;
+    if (row.severity === 'critical' || row.severity === 'high') measure.highSeverityCount++;
+    if (row.status === 'resolved') {
+      measure.resolutionHours.push((Date.parse(row.resolvedAt) - Date.parse(row.openedAt)) / 3600000);
+    }
+  }
+  return [...services.values()].map(({ resolutionHours, ...measure }) => ({
+    ...measure,
+    averageResolutionHours: resolutionHours.length
+      ? resolutionHours.reduce((total, hours) => total + hours, 0) / resolutionHours.length
+      : null,
+  })).sort((a, b) => b.unresolvedCount - a.unresolvedCount || compare(a.service, b.service));
+}
+
 function csvCell(value) {
   const text = value === null ? '' : Array.isArray(value) ? JSON.stringify(value) : String(value);
   return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
@@ -125,6 +148,10 @@ export async function createAppServer() {
         return json(response, 405, { error: { code: 'METHOD_NOT_ALLOWED', message: 'Use GET for this read-only server' } });
       }
       const url = new URL(request.url, 'http://127.0.0.1');
+      if (url.pathname === '/api/overview') {
+        const query = parseQuery(url.searchParams, false);
+        return json(response, 200, { services: overview(matching(rows, query)) });
+      }
       if (url.pathname === '/api/incidents' || url.pathname === '/api/export.csv') {
         const exporting = url.pathname === '/api/export.csv';
         const query = parseQuery(url.searchParams, exporting);
